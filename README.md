@@ -245,13 +245,14 @@ Health check endpoint (no auth required).
 | Variable | Required | Description |
 |---|---|---|
 | `API_KEY` | yes | Secret key for API authentication |
-| `OPENAI_API_KEY` | yes | LLM provider API key (or other supported provider) |
+| `OPENAI_API_KEY` | varies | OpenAI API key (required if `LLM_PROVIDER=openai`, the default) |
+| `ANTHROPIC_API_KEY` | varies | Anthropic API key (required if `LLM_PROVIDER=anthropic`) |
 | `FIRECRAWL_API_KEY` | yes* | Firecrawl API key (*not needed if self-hosted without auth) |
 | `FIRECRAWL_API_URL` | no | Self-hosted Firecrawl URL (default: Firecrawl cloud) |
 | `REDIS_URL` | yes | Redis connection string (e.g. `redis://localhost:6379`) |
 | `ALLOWED_CALLBACK_HOSTS` | yes | Comma-separated list of allowed callback URL hosts |
 | `RESULT_TTL_SECONDS` | no | How long results are cached (default: `3600` = 1 hour) |
-| `LLM_PROVIDER` | no | LLM provider for GPT Researcher (default: `openai`) |
+| `LLM_PROVIDER` | no | LLM provider for GPT Researcher (default: `openai`). Supports any provider available in [LiteLLM](https://docs.litellm.ai/docs/providers): `openai`, `anthropic`, `google`, `ollama`, `azure`, `bedrock`, etc. |
 | `FAST_LLM` | no | Model for fast operations (default: `gpt-4o-mini`) |
 | `SMART_LLM` | no | Model for deep reasoning (default: `gpt-4o`) |
 | `MAX_DEPTH_TIER` | no | Highest depth tier callers can use: `quick`, `standard`, or `deep` (default: `deep`) |
