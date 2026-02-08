@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     firecrawl_api_key: str = ""
     firecrawl_api_url: str = ""
+    tavily_api_key: str = ""
 
     redis_url: str = "redis://localhost:6379"
     allowed_callback_hosts: str = ""
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     fast_llm: str = "gpt-4o-mini"
     smart_llm: str = "gpt-4o"
+    embedding_model: str = "openai:text-embedding-3-small"
     max_depth_tier: str = "deep"
     log_level: str = "INFO"
 
