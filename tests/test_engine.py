@@ -78,7 +78,8 @@ def _mock_agent_result(output, input_tokens=10, output_tokens=20):
 @patch("src.research.engine.scrape", new_callable=AsyncMock)
 @patch("src.research.engine.search", new_callable=AsyncMock)
 @patch("src.research.engine.Agent")
-async def test_engine_run_single_depth(mock_agent_cls, mock_search, mock_scrape, mock_compress):
+@patch("src.research.engine.build_default_registry")
+async def test_engine_run_single_depth(mock_build_registry, mock_agent_cls, mock_search, mock_scrape, mock_compress):
     """Test a depth=1 research run with mocked external calls."""
     settings = _mock_settings()
     engine = ResearchEngine(settings)
@@ -129,7 +130,8 @@ async def test_engine_run_single_depth(mock_agent_cls, mock_search, mock_scrape,
 @patch("src.research.engine.scrape", new_callable=AsyncMock)
 @patch("src.research.engine.search", new_callable=AsyncMock)
 @patch("src.research.engine.Agent")
-async def test_engine_emits_events(mock_agent_cls, mock_search, mock_scrape, mock_compress):
+@patch("src.research.engine.build_default_registry")
+async def test_engine_emits_events(mock_build_registry, mock_agent_cls, mock_search, mock_scrape, mock_compress):
     """Test that the engine emits SSE events via the callback."""
     settings = _mock_settings()
     engine = ResearchEngine(settings)
@@ -164,7 +166,8 @@ async def test_engine_emits_events(mock_agent_cls, mock_search, mock_scrape, moc
 @patch("src.research.engine.scrape", new_callable=AsyncMock)
 @patch("src.research.engine.search", new_callable=AsyncMock)
 @patch("src.research.engine.Agent")
-async def test_engine_recursive_depth(mock_agent_cls, mock_search, mock_scrape, mock_compress):
+@patch("src.research.engine.build_default_registry")
+async def test_engine_recursive_depth(mock_build_registry, mock_agent_cls, mock_search, mock_scrape, mock_compress):
     """Test that depth=2 makes two research levels."""
     settings = _mock_settings()
     engine = ResearchEngine(settings)

@@ -24,7 +24,7 @@ from src.research.prompts import (
     format_plan_prompt,
     format_report_prompt,
 )
-from src.research.scrape import ScrapedPage, scrape
+from src.research.scrape import ScrapedPage, build_default_registry, scrape
 from src.research.search import SearchResult, search
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ class ResearchEngine:
         self._settings = settings
         self._model = f"{settings.llm_provider}:{settings.fast_llm}"
         self._smart_model = f"{settings.llm_provider}:{settings.smart_llm}"
+        self._registry = build_default_registry(settings)
 
     async def run(
         self,
@@ -242,8 +243,7 @@ class ResearchEngine:
         await emit_event(on_event, "status", {"step": "researching", "message": f"Scraping {len(urls_to_scrape)} pages..."})
         pages: list[ScrapedPage] = await scrape(
             urls_to_scrape,
-            api_key=self._settings.firecrawl_api_key,
-            api_url=self._settings.firecrawl_api_url,
+            registry=self._registry,
         )
 
         # Build passages from scraped content
