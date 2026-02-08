@@ -83,15 +83,22 @@ research-service/
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── routes.py               # POST /research, GET /research/{id}
-│   │   └── schemas.py              # Request/response Pydantic models
+│   │   ├── schemas.py              # Request/response Pydantic models
+│   │   └── service.py              # Service layer (stream/background orchestration)
 │   │
 │   ├── research/
 │   │   ├── __init__.py
 │   │   ├── engine.py               # PydanticAI pipeline orchestrator
+│   │   ├── depth.py                # Depth tier configuration (quick/standard/deep)
+│   │   ├── events.py               # SSE event callback helpers
 │   │   ├── prompts.py              # Prompt templates with format helpers
 │   │   ├── search.py               # Tavily async wrapper
-│   │   ├── scrape.py               # Firecrawl async wrapper
-│   │   ├── compress.py             # OpenAI embeddings + numpy cosine similarity
+│   │   ├── scrape/
+│   │   │   ├── __init__.py         # Public API: scrape(), build_default_registry()
+│   │   │   ├── models.py           # ScrapedPage dataclass
+│   │   │   ├── registry.py         # Loader registry (strategy pattern)
+│   │   │   └── firecrawl_loader.py # Firecrawl scraping implementation
+│   │   ├── compress.py             # Embeddings + cosine similarity context compression
 │   │   └── tasks.py                # Background task runner + callback logic
 │   │
 │   └── cache/
@@ -144,7 +151,7 @@ Start a new research task.
 | `depth` | enum | no | `"quick"`, `"standard"` (default), or `"deep"` — see below |
 | `research_depth` | int | no | Override recursive depth (levels of sub-questions). Ignored if `depth` is set |
 | `research_breadth` | int | no | Override parallel breadth (paths per level). Ignored if `depth` is set |
-| `report_type` | string | no | GPT Researcher report type override (default: per tier). Ignored if `depth` is set |
+| `report_type` | string | no | Report type override (default: per tier). Ignored if `depth` is set |
 | `callback_url` | string | no | Required when `mode=background`, optional for `mode=stream`. Must match `ALLOWED_CALLBACK_HOSTS` |
 
 Use `depth` for presets, or set `research_depth`/`research_breadth`/`report_type` directly for full control. When `depth` is set, the individual fields are ignored.
@@ -249,6 +256,7 @@ Health check endpoint (no auth required).
 | `API_KEY` | yes | Secret key for API authentication |
 | `OPENAI_API_KEY` | varies | OpenAI API key (required if `LLM_PROVIDER=openai`, the default) |
 | `ANTHROPIC_API_KEY` | varies | Anthropic API key (required if `LLM_PROVIDER=anthropic`) |
+| `GEMINI_API_KEY` | varies | Google Gemini API key (required if `LLM_PROVIDER=google` or `EMBEDDING_MODEL=google:...`) |
 | `TAVILY_API_KEY` | yes | API key for [Tavily](https://tavily.com/) web search |
 | `FIRECRAWL_API_KEY` | yes* | Firecrawl API key (*not needed if self-hosted without auth) |
 | `FIRECRAWL_API_URL` | no | Self-hosted Firecrawl URL (default: Firecrawl cloud) |
