@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+from google import genai
 from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,28 @@ async def _get_embeddings_openai(
     return embeddings, usage
 
 
+async def _get_embeddings_google(
+    texts: list[str],
+    model_name: str,
+    api_key: str,
+) -> tuple[list[list[float]], EmbeddingUsage]:
+    """Get embeddings via the Google Gemini API.
+
+    Returns (embeddings_list, usage_dict).
+    """
+    client = genai.Client(api_key=api_key)
+    response = await client.aio.models.embed_content(
+        model=model_name,
+        contents=texts,
+    )
+    embeddings = [e.values for e in response.embeddings]
+    usage: EmbeddingUsage = {
+        "input_tokens": response.metadata.billable_character_count or 0,
+        "requests": 1,
+    }
+    return embeddings, usage
+
+
 async def compress_context(
     query: str,
     passages: list[str],
@@ -52,9 +75,9 @@ async def compress_context(
 ) -> tuple[list[str], EmbeddingUsage]:
     """Rank *passages* by cosine similarity to *query*, return top-K.
 
-    Uses an embeddings API determined by the *model* prefix (e.g. ``openai:``).
-    Returns a tuple of (selected_passages, usage_dict) where usage_dict
-    contains ``input_tokens`` and ``requests`` counts.
+    Uses an embeddings API determined by the *model* prefix (e.g. ``openai:``,
+    ``google:``).  Returns a tuple of (selected_passages, usage_dict) where
+    usage_dict contains ``input_tokens`` and ``requests`` counts.
     """
     empty_usage: EmbeddingUsage = {"input_tokens": 0, "requests": 0}
 
@@ -70,6 +93,8 @@ async def compress_context(
 
         if provider == "openai":
             raw_embeddings, usage = await _get_embeddings_openai(all_texts, model_name, api_key)
+        elif provider == "google":
+            raw_embeddings, usage = await _get_embeddings_google(all_texts, model_name, api_key)
         else:
             raise ValueError(f"Unsupported embedding provider: {provider!r}")
 

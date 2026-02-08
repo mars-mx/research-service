@@ -56,11 +56,23 @@ def resolve_params(
 class ResearchEngine:
     """Orchestrates the plan -> search -> scrape -> compress -> write pipeline."""
 
+    _EMBEDDING_API_KEY_MAP = {
+        "openai": "openai_api_key",
+        "google": "gemini_api_key",
+    }
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._model = f"{settings.llm_provider}:{settings.fast_llm}"
         self._smart_model = f"{settings.llm_provider}:{settings.smart_llm}"
         self._registry = build_default_registry(settings)
+        self._embedding_api_key = self._resolve_embedding_api_key()
+
+    def _resolve_embedding_api_key(self) -> str:
+        """Pick the correct API key for the configured embedding provider."""
+        provider = self._settings.embedding_model.split(":")[0] if ":" in self._settings.embedding_model else "openai"
+        attr = self._EMBEDDING_API_KEY_MAP.get(provider, "openai_api_key")
+        return getattr(self._settings, attr)
 
     async def run(
         self,
@@ -135,7 +147,7 @@ class ResearchEngine:
             passages, embed_usage = await compress_context(
                 query=query,
                 passages=passages,
-                api_key=self._settings.openai_api_key,
+                api_key=self._embedding_api_key,
                 model=self._settings.embedding_model,
                 top_k=len(passages),
             )
@@ -157,9 +169,10 @@ class ResearchEngine:
         writer = Agent(self._smart_model)
         write_result = await writer.run(prompt)
         report = write_result.output
-        total_input += write_result.usage.input_tokens or 0
-        total_output += (write_result.usage.output_tokens or 0) + _reasoning_tokens(write_result.usage)
-        total_requests += write_result.usage.requests or 0
+        write_usage = write_result.usage()
+        total_input += write_usage.input_tokens or 0
+        total_output += (write_usage.output_tokens or 0) + _reasoning_tokens(write_usage)
+        total_requests += write_usage.requests or 0
 
         # Deduplicate sources by URL
         seen_urls: set[str] = set()
@@ -218,9 +231,10 @@ class ResearchEngine:
         planner = Agent(self._model, output_type=list[str])
         plan_result = await planner.run(prompt)
         sub_queries = plan_result.output[:breadth]
-        total_input += plan_result.usage.input_tokens or 0
-        total_output += (plan_result.usage.output_tokens or 0) + _reasoning_tokens(plan_result.usage)
-        total_requests += plan_result.usage.requests or 0
+        plan_usage = plan_result.usage()
+        total_input += plan_usage.input_tokens or 0
+        total_output += (plan_usage.output_tokens or 0) + _reasoning_tokens(plan_usage)
+        total_requests += plan_usage.requests or 0
 
         # Search all sub-queries in parallel
         await emit_event(on_event, "status", {"step": "researching", "message": f"Searching {len(sub_queries)} queries..."})
@@ -255,7 +269,7 @@ class ResearchEngine:
             passages, embed_usage = await compress_context(
                 query=query,
                 passages=passages,
-                api_key=self._settings.openai_api_key,
+                api_key=self._embedding_api_key,
                 model=self._settings.embedding_model,
                 top_k=10,
             )

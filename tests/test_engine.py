@@ -48,6 +48,7 @@ def _mock_settings(**overrides):
         tavily_api_key="test-tavily",
         firecrawl_api_key="test-firecrawl",
         firecrawl_api_url="",
+        gemini_api_key="test-gemini",
         embedding_model="openai:text-embedding-3-small",
     )
     defaults.update(overrides)
@@ -69,7 +70,7 @@ def _mock_usage(input_tokens=10, output_tokens=20, details=None):
 def _mock_agent_result(output, input_tokens=10, output_tokens=20):
     result = MagicMock()
     result.output = output
-    result.usage = _mock_usage(input_tokens, output_tokens)
+    result.usage = MagicMock(return_value=_mock_usage(input_tokens, output_tokens))
     return result
 
 
