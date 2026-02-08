@@ -1,6 +1,6 @@
 # Research Service
 
-A simple HTTP service that performs autonomous multi-step web research using [GPT Researcher](https://github.com/assafelovic/gpt-researcher) and [Firecrawl](https://www.firecrawl.dev/) for web fetching. Built with FastAPI — runs anywhere you can run a Python process.
+A simple HTTP service that performs autonomous multi-step web research using a custom [PydanticAI](https://ai.pydantic.dev/)-based research engine with [Tavily](https://tavily.com/) for web search and [Firecrawl](https://www.firecrawl.dev/) for web scraping. Built with FastAPI — runs anywhere you can run a Python process.
 
 ## Architecture
 
@@ -8,11 +8,11 @@ A simple HTTP service that performs autonomous multi-step web research using [GP
   Client ──────────►  FastAPI + Uvicorn  ──────────►  Redis
   (API Key in header)     │                          (result cache, 1hr TTL)
                           │
-                     GPT Researcher
-                     + Firecrawl
+                     PydanticAI Engine
+                     (Tavily + Firecrawl + Embeddings)
 ```
 
-The service is a single process that listens on a port. Point it at a Redis instance, set your API keys, and you're running. No special infrastructure required.
+The service is a single process that listens on a port. The research pipeline plans sub-questions, searches the web via Tavily, scrapes pages with Firecrawl, compresses context using OpenAI embeddings with cosine similarity, and writes a final report — all orchestrated by PydanticAI. Point it at a Redis instance, set your API keys, and you're running. No special infrastructure required.
 
 ### Request Flow
 
@@ -23,7 +23,7 @@ Client ──POST /research (stream=true)──► Service
   (if callback_url provided: Service also POSTs callback on completion)
 ```
 
-Both modes always cache results in Redis, so even if the stream disconnects the result can be retrieved via `GET /research/{task_id}` or the callback.
+Both modes always cache results in Redis, so even if the stream disconnects the result can be retrieved via `GET /research/{task_id}` or the callback. (Note: streaming mode currently does not cancel research on client disconnect — the task runs to completion and the result is always cached.)
 
 **Background Mode (Webhook Callback):**
 ```
@@ -42,22 +42,20 @@ Client ──GET /research/{task_id}──► Service ──► Redis ──► 
 |---|---|---|
 | Web Framework | [FastAPI](https://fastapi.tiangolo.com/) | HTTP API, SSE streaming, request validation |
 | ASGI Server | [Uvicorn](https://www.uvicorn.org/) | Production ASGI server |
-| Research Engine | [GPT Researcher](https://github.com/assafelovic/gpt-researcher) | Autonomous multi-step deep research |
-| Web Fetching | [Firecrawl](https://www.firecrawl.dev/) | Website scraping (self-hosted or cloud) |
+| Research Engine | Custom [PydanticAI](https://ai.pydantic.dev/) pipeline | plan → search → scrape → compress → write |
+| Web Search | [Tavily](https://tavily.com/) | Async web search API |
+| Web Scraping | [Firecrawl](https://www.firecrawl.dev/) | Website scraping (self-hosted or cloud) |
+| Context Compression | OpenAI Embeddings + cosine similarity | Relevant context extraction via vector similarity |
 | Result Cache | [Redis](https://redis.io/) | Temporary result storage with 1hr TTL |
 
-### Why GPT Researcher?
+### Why a Custom Engine?
 
-Evaluated 9 open-source deep research packages. GPT Researcher was selected because:
+The service originally used GPT Researcher but was replaced with a custom PydanticAI-based pipeline for several reasons:
 
-- **Native Firecrawl support** via `SCRAPER=firecrawl` config (including self-hosted instances)
-- **pip-installable** (`pip install gpt-researcher`) — clean library integration
-- **Built-in streaming** via WebSocket/async events for real-time progress
-- **Mature & active** — 25k+ GitHub stars, actively maintained through 2026
-- **Configurable** — supports multiple LLM providers, search engines, and report types
-- **Apache-2.0 license** — permissive for internal use
-
-Other candidates considered: LangChain Open Deep Research (no Firecrawl), dzhng/deep-research (TypeScript CLI, not a library), u14app/deep-research (full-stack app, not embeddable), Perplexica (no Firecrawl).
+- **Structured LLM outputs with real token tracking** — PydanticAI validates outputs against Pydantic models and exposes actual token usage via `result.usage`, enabling accurate cost tracking
+- **Lighter dependency footprint** — ~10 dependencies vs ~25+ pulled in by LangChain/gpt-researcher, reducing image size and attack surface
+- **Full control over the research pipeline** — each stage (plan, search, scrape, compress, write) is a discrete, testable unit rather than an opaque library call
+- **Provider-agnostic LLM support** — PydanticAI natively supports OpenAI, Anthropic, Google, Ollama, and other providers without requiring a separate compatibility layer like LiteLLM
 
 ## Project Structure
 
@@ -89,7 +87,11 @@ research-service/
 │   │
 │   ├── research/
 │   │   ├── __init__.py
-│   │   ├── engine.py               # GPT Researcher wrapper & configuration
+│   │   ├── engine.py               # PydanticAI pipeline orchestrator
+│   │   ├── prompts.py              # Prompt templates with format helpers
+│   │   ├── search.py               # Tavily async wrapper
+│   │   ├── scrape.py               # Firecrawl async wrapper
+│   │   ├── compress.py             # OpenAI embeddings + numpy cosine similarity
 │   │   └── tasks.py                # Background task runner + callback logic
 │   │
 │   └── cache/
@@ -247,14 +249,16 @@ Health check endpoint (no auth required).
 | `API_KEY` | yes | Secret key for API authentication |
 | `OPENAI_API_KEY` | varies | OpenAI API key (required if `LLM_PROVIDER=openai`, the default) |
 | `ANTHROPIC_API_KEY` | varies | Anthropic API key (required if `LLM_PROVIDER=anthropic`) |
+| `TAVILY_API_KEY` | yes | API key for [Tavily](https://tavily.com/) web search |
 | `FIRECRAWL_API_KEY` | yes* | Firecrawl API key (*not needed if self-hosted without auth) |
 | `FIRECRAWL_API_URL` | no | Self-hosted Firecrawl URL (default: Firecrawl cloud) |
 | `REDIS_URL` | yes | Redis connection string (e.g. `redis://localhost:6379`) |
 | `ALLOWED_CALLBACK_HOSTS` | yes | Comma-separated list of allowed callback URL hosts |
 | `RESULT_TTL_SECONDS` | no | How long results are cached (default: `3600` = 1 hour) |
-| `LLM_PROVIDER` | no | LLM provider for GPT Researcher (default: `openai`). Supports any provider available in [LiteLLM](https://docs.litellm.ai/docs/providers): `openai`, `anthropic`, `google`, `ollama`, `azure`, `bedrock`, etc. |
+| `LLM_PROVIDER` | no | LLM provider for PydanticAI (default: `openai`). Supports any provider available in [PydanticAI](https://ai.pydantic.dev/): `openai`, `anthropic`, `google`, `ollama`, etc. |
 | `FAST_LLM` | no | Model for fast operations (default: `gpt-4o-mini`) |
 | `SMART_LLM` | no | Model for deep reasoning (default: `gpt-4o`) |
+| `EMBEDDING_MODEL` | no | Model for context compression embeddings (default: `openai:text-embedding-3-small`) |
 | `MAX_DEPTH_TIER` | no | Highest depth tier callers can use: `quick`, `standard`, or `deep` (default: `deep`) |
 | `LOG_LEVEL` | no | Logging level (default: `INFO`) |
 

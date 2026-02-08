@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.api.schemas import ResearchResult
-from src.research.engine import DEPTH_TIERS, ResearchEngine, resolve_params
+from src.research.engine import ResearchEngine, resolve_params
 
 
 # --- resolve_params tests (synchronous) ---
@@ -57,11 +57,12 @@ def _mock_settings(**overrides):
     return settings
 
 
-def _mock_usage(input_tokens=10, output_tokens=20):
+def _mock_usage(input_tokens=10, output_tokens=20, details=None):
     usage = MagicMock()
     usage.input_tokens = input_tokens
     usage.output_tokens = output_tokens
     usage.requests = 1
+    usage.details = details or {}
     return usage
 
 
@@ -106,8 +107,8 @@ async def test_engine_run_single_depth(mock_agent_cls, mock_search, mock_scrape,
     scraped_page.images = []
     mock_scrape.return_value = [scraped_page]
 
-    # Mock compress (pass-through)
-    mock_compress.side_effect = lambda **kwargs: kwargs["passages"]
+    # Mock compress (pass-through, returns tuple of passages + usage)
+    mock_compress.side_effect = lambda **kwargs: (kwargs["passages"], {"input_tokens": 0, "requests": 0})
 
     result = await engine.run(query="advances in AI", depth=1, breadth=2)
 
@@ -142,7 +143,7 @@ async def test_engine_emits_events(mock_agent_cls, mock_search, mock_scrape, moc
 
     mock_search.return_value = []
     mock_scrape.return_value = []
-    mock_compress.side_effect = lambda **kwargs: kwargs["passages"]
+    mock_compress.side_effect = lambda **kwargs: (kwargs["passages"], {"input_tokens": 0, "requests": 0})
 
     events: list[tuple[str, dict]] = []
 
@@ -179,7 +180,7 @@ async def test_engine_recursive_depth(mock_agent_cls, mock_search, mock_scrape, 
 
     mock_search.return_value = []
     mock_scrape.return_value = []
-    mock_compress.side_effect = lambda **kwargs: kwargs["passages"]
+    mock_compress.side_effect = lambda **kwargs: (kwargs["passages"], {"input_tokens": 0, "requests": 0})
 
     result = await engine.run(query="test", depth=2, breadth=2)
 

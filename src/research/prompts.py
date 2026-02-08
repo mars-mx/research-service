@@ -1,6 +1,6 @@
 """Prompt templates for each research pipeline stage."""
 
-from datetime import date, datetime, timezone
+from datetime import date
 
 AGENT_SELECTION_PROMPT = """\
 You are a research assistant selector. Given a research query, choose the most \
