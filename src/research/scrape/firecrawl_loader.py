@@ -30,63 +30,32 @@ class FirecrawlLoader:
     async def load(self, url: str) -> ScrapedPage | None:
         """Scrape a single URL via Firecrawl and return a ScrapedPage."""
         try:
-            response = await self._client.scrape_url(
+            response = await self._client.scrape(
                 url=url,
                 formats=["markdown"],
             )
-            metadata = (
-                response.get("metadata", {}) if isinstance(response, dict) else {}
-            )
-            markdown = (
-                response.get("markdown", "") if isinstance(response, dict) else ""
-            )
-            # Some Firecrawl versions return a ScrapeResponse object
-            if hasattr(response, "markdown"):
-                markdown = response.markdown or ""
-            if hasattr(response, "metadata"):
-                metadata = response.metadata or {}
-                if hasattr(metadata, "title"):
-                    metadata = {"title": metadata.title}
+            markdown = response.markdown or ""
 
             if len(markdown) < 100:
                 return None
 
-            # Extract title
             title = ""
-            if isinstance(metadata, dict):
-                title = metadata.get("title", "")
+            if response.metadata:
+                title = response.metadata.title or ""
 
-            # Extract images from the response
+            # Deduplicate images while preserving order
             images: list[str] = []
-            # Check for images field on the response object
-            if hasattr(response, "images") and response.images:
-                images.extend(response.images)
-            # Check for images/image in metadata dict
-            if isinstance(metadata, dict):
-                meta_images = metadata.get("images", [])
-                if isinstance(meta_images, list):
-                    images.extend(meta_images)
-                meta_image = metadata.get("image", "")
-                if isinstance(meta_image, str) and meta_image:
-                    images.append(meta_image)
-            # Check for images in dict-style response
-            if isinstance(response, dict):
-                resp_images = response.get("images", [])
-                if isinstance(resp_images, list):
-                    images.extend(resp_images)
-            # Deduplicate while preserving order
             seen: set[str] = set()
-            unique_images: list[str] = []
-            for img in images:
+            for img in response.images or []:
                 if img not in seen:
                     seen.add(img)
-                    unique_images.append(img)
+                    images.append(img)
 
             return ScrapedPage(
                 url=url,
                 title=title,
                 content=markdown,
-                images=unique_images,
+                images=images,
             )
         except Exception:
             logger.warning("scrape failed for %s", url, exc_info=True)
