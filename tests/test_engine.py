@@ -118,9 +118,9 @@ async def test_engine_run_single_depth(mock_build_registry, mock_agent_cls, mock
     assert result.status == "completed"
     assert result.report == "# Report\n\nSome content"
     assert len(result.sources) >= 1
-    assert result.metadata.input_tokens > 0
-    assert result.metadata.output_tokens > 0
-    assert result.metadata.total_tokens == result.metadata.input_tokens + result.metadata.output_tokens
+    assert result.usage.prompt_tokens > 0
+    assert result.usage.completion_tokens > 0
+    assert result.usage.total_tokens == result.usage.prompt_tokens + result.usage.completion_tokens
     assert result.metadata.llm_provider == "openai"
     assert result.metadata.fast_llm == "gpt-4o-mini"
     assert result.metadata.smart_llm == "gpt-4o"
@@ -160,6 +160,13 @@ async def test_engine_emits_events(mock_build_registry, mock_agent_cls, mock_sea
     assert "status" in event_types
     assert "result" in event_types
     assert "done" in event_types
+
+    # Verify the result event includes usage data
+    result_event = next(data for etype, data in events if etype == "result")
+    assert "usage" in result_event
+    assert "prompt_tokens" in result_event["usage"]
+    assert "completion_tokens" in result_event["usage"]
+    assert "total_tokens" in result_event["usage"]
 
 
 @pytest.mark.asyncio

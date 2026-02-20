@@ -14,6 +14,7 @@ from src.api.schemas import (
     ResearchMetadata,
     ResearchResult,
     ResearchSource,
+    Usage,
 )
 from src.config import Settings
 from src.research.compress import compress_context
@@ -183,6 +184,11 @@ class ResearchEngine:
                 unique_sources.append(src)
 
         now = datetime.now(timezone.utc)
+        usage = Usage(
+            prompt_tokens=total_input,
+            completion_tokens=total_output,
+            total_tokens=total_input + total_output,
+        )
         result = ResearchResult(
             task_id=task_id,
             status="completed",
@@ -190,10 +196,8 @@ class ResearchEngine:
             sources=unique_sources,
             source_urls=sorted(all_urls),
             images=all_images,
+            usage=usage,
             metadata=ResearchMetadata(
-                input_tokens=total_input,
-                output_tokens=total_output,
-                total_tokens=total_input + total_output,
                 requests=total_requests,
                 llm_provider=self._settings.llm_provider,
                 fast_llm=self._settings.fast_llm,
@@ -202,7 +206,7 @@ class ResearchEngine:
             created_at=now,
         )
 
-        await emit_event(on_event, "result", {"task_id": task_id, "report": report, "sources": [s.model_dump() for s in unique_sources]})
+        await emit_event(on_event, "result", {"task_id": task_id, "report": report, "sources": [s.model_dump() for s in unique_sources], "usage": usage.model_dump()})
         await emit_event(on_event, "done", {})
 
         return result

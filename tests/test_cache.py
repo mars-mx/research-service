@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 import redis.asyncio as redis
 
-from src.api.schemas import ResearchMetadata, ResearchResult, ResearchSource
+from src.api.schemas import ResearchMetadata, ResearchResult, ResearchSource, Usage
 from src.cache.redis import KEY_PREFIX, RedisCache
 
 
@@ -20,8 +20,8 @@ def _make_result(task_id: str = "task-1", **overrides) -> ResearchResult:
         sources=[ResearchSource(url="https://example.com", title="Example")],
         source_urls=["https://example.com"],
         images=["https://example.com/img.png"],
+        usage=Usage(prompt_tokens=300, completion_tokens=200, total_tokens=500),
         metadata=ResearchMetadata(
-            input_tokens=300, output_tokens=200, total_tokens=500,
             requests=2, llm_provider="openai", fast_llm="gpt-4o-mini", smart_llm="gpt-4o",
         ),
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -59,20 +59,47 @@ async def test_key_prefix(redis_cache: RedisCache):
     assert not await redis_cache._client.exists("abc-123")
 
 
-async def test_metadata_round_trip(redis_cache: RedisCache):
+async def test_usage_round_trip(redis_cache: RedisCache):
     result = _make_result(
+        usage=Usage(prompt_tokens=100, completion_tokens=400, total_tokens=500),
         metadata=ResearchMetadata(
-            input_tokens=100, output_tokens=400, total_tokens=500,
             requests=3, llm_provider="openai", fast_llm="gpt-4o-mini", smart_llm="gpt-4o",
         ),
     )
     await redis_cache.set("task-meta", result)
     cached = await redis_cache.get("task-meta")
-    assert cached.metadata.input_tokens == 100
-    assert cached.metadata.output_tokens == 400
-    assert cached.metadata.total_tokens == 500
+    assert cached.usage.prompt_tokens == 100
+    assert cached.usage.completion_tokens == 400
+    assert cached.usage.total_tokens == 500
     assert cached.metadata.requests == 3
     assert cached.metadata.llm_provider == "openai"
+
+
+async def test_legacy_cached_json_defaults_usage(redis_cache: RedisCache):
+    """Old cached JSON (tokens in metadata, no usage key) deserializes with usage defaulting to zeros."""
+    import json
+
+    legacy_json = json.dumps({
+        "task_id": "task-legacy",
+        "status": "completed",
+        "report": "# Legacy",
+        "sources": [],
+        "source_urls": [],
+        "images": [],
+        "metadata": {
+            "requests": 1,
+            "llm_provider": "openai",
+            "fast_llm": "gpt-4o-mini",
+            "smart_llm": "gpt-4o",
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+    })
+    await redis_cache._client.set(f"{KEY_PREFIX}task-legacy", legacy_json, ex=3600)
+    cached = await redis_cache.get("task-legacy")
+    assert cached is not None
+    assert cached.usage.prompt_tokens == 0
+    assert cached.usage.completion_tokens == 0
+    assert cached.usage.total_tokens == 0
 
 
 async def test_source_urls_and_images_round_trip(redis_cache: RedisCache):

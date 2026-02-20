@@ -21,10 +21,13 @@ class ResearchSource(BaseModel):
     title: str
 
 
-class ResearchMetadata(BaseModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
+class Usage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     total_tokens: int = 0
+
+
+class ResearchMetadata(BaseModel):
     requests: int = 0
     agent: str = ""
     llm_provider: str = ""
@@ -35,10 +38,11 @@ class ResearchMetadata(BaseModel):
 class ResearchResult(BaseModel):
     task_id: str
     status: str = "completed"
-    report: str
+    report: str = ""
     sources: list[ResearchSource] = []
     source_urls: list[str] = []
     images: list[str] = []
+    usage: Usage = Usage()
     metadata: ResearchMetadata = ResearchMetadata()
     created_at: datetime
     expires_at: datetime | None = None
