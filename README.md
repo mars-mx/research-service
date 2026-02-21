@@ -52,7 +52,7 @@ Client ──GET /research/{task_id}──► Service ──► Redis ──► 
 
 The service originally used GPT Researcher but was replaced with a custom PydanticAI-based pipeline for several reasons:
 
-- **Structured LLM outputs with real token tracking** — PydanticAI validates outputs against Pydantic models and exposes actual token usage via `result.usage` in OpenAI-compatible format (`prompt_tokens`, `completion_tokens`, `total_tokens`), enabling accurate cost tracking with standard tooling
+- **Structured LLM outputs with per-model token tracking** — PydanticAI validates outputs against Pydantic models and exposes actual token usage via `result.usage` in OpenAI-compatible format (`prompt_tokens`, `completion_tokens`, `total_tokens`). Usage is tracked per model and role (`planner`, `writer`, `embedding`) in `usage_by_model`, enabling accurate cost attribution when models have different pricing
 - **Lighter dependency footprint** — ~10 dependencies vs ~25+ pulled in by LangChain/gpt-researcher, reducing image size and attack surface
 - **Full control over the research pipeline** — each stage (plan, search, scrape, compress, write) is a discrete, testable unit rather than an opaque library call
 - **Provider-agnostic LLM support** — PydanticAI natively supports OpenAI, Anthropic, Google, Ollama, and other providers without requiring a separate compatibility layer like LiteLLM
@@ -197,7 +197,7 @@ event: status
 data: {"step": "writing", "message": "Generating final report..."}
 
 event: result
-data: {"task_id": "abc123", "report": "# Quantum Computing Advances\n...", "sources": [...], "usage": {"prompt_tokens": 12500, "completion_tokens": 3200, "total_tokens": 15700}}
+data: {"task_id": "abc123", "report": "# Quantum Computing Advances\n...", "sources": [...], "usage": {"prompt_tokens": 12500, "completion_tokens": 3200, "total_tokens": 15700}, "usage_by_model": [{"model": "openai:gpt-4o-mini", "role": "planner", "prompt_tokens": 2500, "completion_tokens": 200, "total_tokens": 2700, "requests": 2}, {"model": "openai:gpt-4o", "role": "writer", "prompt_tokens": 10000, "completion_tokens": 3000, "total_tokens": 13000, "requests": 1}]}
 
 event: done
 data: {}
@@ -243,6 +243,10 @@ Retrieve a completed research result from cache.
     "completion_tokens": 3200,
     "total_tokens": 15700
   },
+  "usage_by_model": [
+    {"model": "openai:gpt-4o-mini", "role": "planner", "prompt_tokens": 2500, "completion_tokens": 200, "total_tokens": 2700, "requests": 2},
+    {"model": "openai:gpt-4o", "role": "writer", "prompt_tokens": 10000, "completion_tokens": 3000, "total_tokens": 13000, "requests": 1}
+  ],
   "metadata": {
     "requests": 8,
     "llm_provider": "openai",

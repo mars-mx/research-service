@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 from pydantic_ai import Agent
 
 from src.api.schemas import (
+    ModelUsage,
     ResearchMetadata,
     ResearchResult,
     ResearchSource,
@@ -35,6 +37,32 @@ def _reasoning_tokens(usage: Any) -> int:
     """Extract reasoning tokens from PydanticAI usage details, if present."""
     details = getattr(usage, "details", None) or {}
     return details.get("reasoning_tokens", 0)
+
+
+@dataclass
+class _TokenBucket:
+    """Accumulates token usage for a single model/role."""
+
+    model: str
+    role: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    requests: int = 0
+
+    def add(self, inp: int, out: int, reqs: int) -> None:
+        self.input_tokens += inp
+        self.output_tokens += out
+        self.requests += reqs
+
+    def to_model_usage(self) -> ModelUsage:
+        return ModelUsage(
+            model=self.model,
+            role=self.role,
+            prompt_tokens=self.input_tokens,
+            completion_tokens=self.output_tokens,
+            total_tokens=self.input_tokens + self.output_tokens,
+            requests=self.requests,
+        )
 
 
 def resolve_params(
@@ -85,9 +113,9 @@ class ResearchEngine:
     ) -> ResearchResult:
         """Execute the full research pipeline and return a result."""
         task_id = uuid.uuid4().hex[:12]
-        total_input = 0
-        total_output = 0
-        total_requests = 0
+        planner_bucket = _TokenBucket(model=self._model, role="planner")
+        writer_bucket = _TokenBucket(model=self._smart_model, role="writer")
+        embed_bucket = _TokenBucket(model=self._settings.embedding_model, role="embedding")
 
         await emit_event(on_event, "started", {"task_id": task_id})
 
@@ -98,7 +126,7 @@ class ResearchEngine:
         all_sources: list[ResearchSource] = []
         all_images: list[str] = []
 
-        context_text, urls, sources, images, inp, out, reqs = await self._research_level(
+        context_text, urls, sources, images, p_inp, p_out, p_reqs, e_usage = await self._research_level(
             query=query,
             breadth=breadth,
             prior_context="",
@@ -108,9 +136,8 @@ class ResearchEngine:
         all_urls.update(urls)
         all_sources.extend(sources)
         all_images.extend(images)
-        total_input += inp
-        total_output += out
-        total_requests += reqs
+        planner_bucket.add(p_inp, p_out, p_reqs)
+        embed_bucket.add(e_usage.get("input_tokens", 0), 0, e_usage.get("requests", 0))
 
         # --- Recursive depth levels ---
         for level in range(1, depth):
@@ -123,7 +150,7 @@ class ResearchEngine:
                 },
             )
             next_breadth = max(2, breadth // (2 ** level))
-            context_text, urls, sources, images, inp, out, reqs = await self._research_level(
+            context_text, urls, sources, images, p_inp, p_out, p_reqs, e_usage = await self._research_level(
                 query=query,
                 breadth=next_breadth,
                 prior_context="\n\n".join(all_context),
@@ -133,9 +160,8 @@ class ResearchEngine:
             all_urls.update(urls)
             all_sources.extend(sources)
             all_images.extend(images)
-            total_input += inp
-            total_output += out
-            total_requests += reqs
+            planner_bucket.add(p_inp, p_out, p_reqs)
+            embed_bucket.add(e_usage.get("input_tokens", 0), 0, e_usage.get("requests", 0))
 
         # --- Stage 5: Write report ---
         await emit_event(on_event, "status", {"step": "writing", "message": "Generating final report..."})
@@ -152,8 +178,7 @@ class ResearchEngine:
                 model=self._settings.embedding_model,
                 top_k=len(passages),
             )
-            total_input += embed_usage.get("input_tokens", 0)
-            total_requests += embed_usage.get("requests", 0)
+            embed_bucket.add(embed_usage.get("input_tokens", 0), 0, embed_usage.get("requests", 0))
             combined_context = "\n\n---\n\n".join(passages)
 
         # Determine min_words from depth tier config if available
@@ -171,9 +196,11 @@ class ResearchEngine:
         write_result = await writer.run(prompt)
         report = write_result.output
         write_usage = write_result.usage()
-        total_input += write_usage.input_tokens or 0
-        total_output += (write_usage.output_tokens or 0) + _reasoning_tokens(write_usage)
-        total_requests += write_usage.requests or 0
+        writer_bucket.add(
+            write_usage.input_tokens or 0,
+            (write_usage.output_tokens or 0) + _reasoning_tokens(write_usage),
+            write_usage.requests or 0,
+        )
 
         # Deduplicate sources by URL
         seen_urls: set[str] = set()
@@ -182,6 +209,18 @@ class ResearchEngine:
             if src.url not in seen_urls:
                 seen_urls.add(src.url)
                 unique_sources.append(src)
+
+        # Build per-model usage (omit buckets with zero requests)
+        usage_by_model = [
+            b.to_model_usage()
+            for b in (planner_bucket, writer_bucket, embed_bucket)
+            if b.requests > 0
+        ]
+
+        # Aggregate totals
+        total_input = planner_bucket.input_tokens + writer_bucket.input_tokens + embed_bucket.input_tokens
+        total_output = planner_bucket.output_tokens + writer_bucket.output_tokens + embed_bucket.output_tokens
+        total_requests = planner_bucket.requests + writer_bucket.requests + embed_bucket.requests
 
         now = datetime.now(timezone.utc)
         usage = Usage(
@@ -197,6 +236,7 @@ class ResearchEngine:
             source_urls=sorted(all_urls),
             images=all_images,
             usage=usage,
+            usage_by_model=usage_by_model,
             metadata=ResearchMetadata(
                 requests=total_requests,
                 llm_provider=self._settings.llm_provider,
@@ -206,7 +246,13 @@ class ResearchEngine:
             created_at=now,
         )
 
-        await emit_event(on_event, "result", {"task_id": task_id, "report": report, "sources": [s.model_dump() for s in unique_sources], "usage": usage.model_dump()})
+        await emit_event(on_event, "result", {
+            "task_id": task_id,
+            "report": report,
+            "sources": [s.model_dump() for s in unique_sources],
+            "usage": usage.model_dump(),
+            "usage_by_model": [u.model_dump() for u in usage_by_model],
+        })
         await emit_event(on_event, "done", {})
 
         return result
@@ -217,14 +263,16 @@ class ResearchEngine:
         breadth: int,
         prior_context: str,
         on_event: EventCallback | None,
-    ) -> tuple[str, list[str], list[ResearchSource], list[str], int, int, int]:
+    ) -> tuple[str, list[str], list[ResearchSource], list[str], int, int, int, dict[str, int]]:
         """Run one level of plan -> search -> scrape -> compress.
 
-        Returns (context_text, urls, sources, images, input_tokens, output_tokens, requests).
+        Returns (context_text, urls, sources, images,
+                 planner_input, planner_output, planner_requests, embed_usage).
         """
-        total_input = 0
-        total_output = 0
-        total_requests = 0
+        planner_input = 0
+        planner_output = 0
+        planner_requests = 0
+        embed_usage: dict[str, int] = {"input_tokens": 0, "requests": 0}
 
         # Plan sub-queries
         if prior_context:
@@ -236,9 +284,9 @@ class ResearchEngine:
         plan_result = await planner.run(prompt)
         sub_queries = plan_result.output[:breadth]
         plan_usage = plan_result.usage()
-        total_input += plan_usage.input_tokens or 0
-        total_output += (plan_usage.output_tokens or 0) + _reasoning_tokens(plan_usage)
-        total_requests += plan_usage.requests or 0
+        planner_input += plan_usage.input_tokens or 0
+        planner_output += (plan_usage.output_tokens or 0) + _reasoning_tokens(plan_usage)
+        planner_requests += plan_usage.requests or 0
 
         # Search all sub-queries in parallel
         await emit_event(on_event, "status", {"step": "researching", "message": f"Searching {len(sub_queries)} queries..."})
@@ -277,8 +325,6 @@ class ResearchEngine:
                 model=self._settings.embedding_model,
                 top_k=10,
             )
-            total_input += embed_usage.get("input_tokens", 0)
-            total_requests += embed_usage.get("requests", 0)
 
         context_text = "\n\n---\n\n".join(passages)
 
@@ -290,7 +336,7 @@ class ResearchEngine:
         ]
         images = [img for p in pages for img in p.images]
 
-        return context_text, all_urls, sources, images, total_input, total_output, total_requests
+        return context_text, all_urls, sources, images, planner_input, planner_output, planner_requests, embed_usage
 
 
 def _find_tier(report_type: str, depth: int, breadth: int) -> DepthTier | None:

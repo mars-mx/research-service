@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 import redis.asyncio as redis
 
-from src.api.schemas import ResearchMetadata, ResearchResult, ResearchSource, Usage
+from src.api.schemas import ModelUsage, ResearchMetadata, ResearchResult, ResearchSource, Usage
 from src.cache.redis import KEY_PREFIX, RedisCache
 
 
@@ -60,8 +60,13 @@ async def test_key_prefix(redis_cache: RedisCache):
 
 
 async def test_usage_round_trip(redis_cache: RedisCache):
+    model_usages = [
+        ModelUsage(model="openai:gpt-4o-mini", role="planner", prompt_tokens=50, completion_tokens=30, total_tokens=80, requests=1),
+        ModelUsage(model="openai:gpt-4o", role="writer", prompt_tokens=50, completion_tokens=370, total_tokens=420, requests=1),
+    ]
     result = _make_result(
         usage=Usage(prompt_tokens=100, completion_tokens=400, total_tokens=500),
+        usage_by_model=model_usages,
         metadata=ResearchMetadata(
             requests=3, llm_provider="openai", fast_llm="gpt-4o-mini", smart_llm="gpt-4o",
         ),
@@ -73,6 +78,12 @@ async def test_usage_round_trip(redis_cache: RedisCache):
     assert cached.usage.total_tokens == 500
     assert cached.metadata.requests == 3
     assert cached.metadata.llm_provider == "openai"
+    assert len(cached.usage_by_model) == 2
+    by_role = {u.role: u for u in cached.usage_by_model}
+    assert by_role["planner"].model == "openai:gpt-4o-mini"
+    assert by_role["planner"].prompt_tokens == 50
+    assert by_role["writer"].model == "openai:gpt-4o"
+    assert by_role["writer"].completion_tokens == 370
 
 
 async def test_legacy_cached_json_defaults_usage(redis_cache: RedisCache):
@@ -100,6 +111,7 @@ async def test_legacy_cached_json_defaults_usage(redis_cache: RedisCache):
     assert cached.usage.prompt_tokens == 0
     assert cached.usage.completion_tokens == 0
     assert cached.usage.total_tokens == 0
+    assert cached.usage_by_model == []
 
 
 async def test_source_urls_and_images_round_trip(redis_cache: RedisCache):

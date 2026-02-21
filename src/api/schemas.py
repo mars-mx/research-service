@@ -27,6 +27,15 @@ class Usage(BaseModel):
     total_tokens: int = 0
 
 
+class ModelUsage(BaseModel):
+    model: str
+    role: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    requests: int = 0
+
+
 class ResearchMetadata(BaseModel):
     requests: int = 0
     agent: str = ""
@@ -43,6 +52,7 @@ class ResearchResult(BaseModel):
     source_urls: list[str] = []
     images: list[str] = []
     usage: Usage = Usage()
+    usage_by_model: list[ModelUsage] = []
     metadata: ResearchMetadata = ResearchMetadata()
     created_at: datetime
     expires_at: datetime | None = None

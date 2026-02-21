@@ -125,6 +125,19 @@ async def test_engine_run_single_depth(mock_build_registry, mock_agent_cls, mock
     assert result.metadata.fast_llm == "gpt-4o-mini"
     assert result.metadata.smart_llm == "gpt-4o"
 
+    # Per-model usage assertions
+    assert len(result.usage_by_model) >= 2  # planner + writer (embedding may be zero)
+    by_role = {u.role: u for u in result.usage_by_model}
+    assert "planner" in by_role
+    assert "writer" in by_role
+    assert by_role["planner"].model == "openai:gpt-4o-mini"
+    assert by_role["writer"].model == "openai:gpt-4o"
+    assert by_role["planner"].prompt_tokens > 0
+    assert by_role["writer"].prompt_tokens > 0
+    # Aggregate equals sum of per-model
+    per_model_total = sum(u.total_tokens for u in result.usage_by_model)
+    assert result.usage.total_tokens == per_model_total
+
 
 @pytest.mark.asyncio
 @patch("src.research.engine.compress_context", new_callable=AsyncMock)
@@ -167,6 +180,8 @@ async def test_engine_emits_events(mock_build_registry, mock_agent_cls, mock_sea
     assert "prompt_tokens" in result_event["usage"]
     assert "completion_tokens" in result_event["usage"]
     assert "total_tokens" in result_event["usage"]
+    assert "usage_by_model" in result_event
+    assert isinstance(result_event["usage_by_model"], list)
 
 
 @pytest.mark.asyncio
@@ -198,3 +213,6 @@ async def test_engine_recursive_depth(mock_build_registry, mock_agent_cls, mock_
     assert result.status == "completed"
     # Planner called twice (once per depth level) + writer once = 3
     assert mock_agent_instance.run.call_count == 3
+    # Planner bucket should have requests == 2 (one per depth level)
+    by_role = {u.role: u for u in result.usage_by_model}
+    assert by_role["planner"].requests == 2
