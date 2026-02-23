@@ -29,6 +29,7 @@ class FirecrawlLoader:
 
     async def load(self, url: str) -> ScrapedPage | None:
         """Scrape a single URL via Firecrawl and return a ScrapedPage."""
+        logger.debug("firecrawl loading", extra={"url": url})
         try:
             response = await self._client.scrape(
                 url=url,
@@ -37,6 +38,7 @@ class FirecrawlLoader:
             markdown = response.markdown or ""
 
             if len(markdown) < 100:
+                logger.debug("firecrawl content too short, discarding", extra={"url": url, "length": len(markdown)})
                 return None
 
             title = ""
@@ -51,6 +53,10 @@ class FirecrawlLoader:
                     seen.add(img)
                     images.append(img)
 
+            logger.debug(
+                "firecrawl loaded",
+                extra={"url": url, "title": title[:80], "content_length": len(markdown), "image_count": len(images)},
+            )
             return ScrapedPage(
                 url=url,
                 title=title,
@@ -58,5 +64,5 @@ class FirecrawlLoader:
                 images=images,
             )
         except Exception:
-            logger.warning("scrape failed for %s", url, exc_info=True)
+            logger.warning("firecrawl scrape failed", extra={"url": url}, exc_info=True)
             return None

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from .firecrawl_loader import FirecrawlLoader, PageLoader
 from .models import ScrapedPage
+from .reddit_loader import RedditLoader
 from .registry import ScraperRegistry
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 __all__ = [
     "FirecrawlLoader",
     "PageLoader",
+    "RedditLoader",
     "ScrapedPage",
     "ScraperRegistry",
     "build_default_registry",
@@ -31,12 +33,20 @@ def build_default_registry(settings: Settings) -> ScraperRegistry:
         api_url=settings.firecrawl_api_url,
     )
 
+    reddit = RedditLoader(
+        max_comments=settings.reddit_max_comments,
+        max_comment_depth=settings.reddit_max_comment_depth,
+        min_comment_score=settings.reddit_min_comment_score,
+        max_content_length=settings.reddit_max_content_length,
+        request_delay=settings.reddit_request_delay,
+        user_agent=settings.reddit_user_agent,
+    )
+
     registry = ScraperRegistry()
 
-    # TODO: implement a dedicated RedditLoader; for now falls back to FirecrawlLoader
     registry.register(
-        patterns=(r".*reddit\.com$", r".*reddit\.de$"),
-        loader=firecrawl,
+        patterns=(r".*reddit\.com$", r".*reddit\.de$", r".*redd\.it$"),
+        loader=reddit,
     )
 
     # Default catch-all: use Firecrawl for any unmatched domain
@@ -53,15 +63,19 @@ async def scrape(
     if not urls:
         return []
 
+    logger.debug("scraping urls", extra={"url_count": len(urls)})
     pages: list[ScrapedPage] = []
     for url in urls:
         loader = registry.get_loader(url)
         if loader is None:
-            logger.warning("no loader found for %s, skipping", url)
+            logger.warning("no loader found, skipping", extra={"url": url})
             continue
 
+        loader_name = type(loader).__name__
+        logger.debug("loader selected", extra={"url": url, "loader": loader_name})
         page = await loader.load(url)
         if page is not None:
             pages.append(page)
 
+    logger.debug("scrape batch complete", extra={"urls_attempted": len(urls), "pages_returned": len(pages)})
     return pages

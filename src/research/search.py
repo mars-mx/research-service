@@ -23,6 +23,7 @@ async def search(
     max_results: int = 5,
 ) -> list[SearchResult]:
     """Search the web via Tavily and return structured results."""
+    logger.debug("searching", extra={"query": query[:100], "max_results": max_results})
     client = AsyncTavilyClient(api_key=api_key)
     try:
         response = await client.search(
@@ -31,7 +32,7 @@ async def search(
             include_answer=False,
         )
     except Exception:
-        logger.warning("search failed for %r", query, exc_info=True)
+        logger.warning("search failed", extra={"query": query[:100]}, exc_info=True)
         return []
 
     results: list[SearchResult] = []
@@ -43,4 +44,5 @@ async def search(
                 snippet=item.get("content", ""),
             )
         )
+    logger.debug("search results received", extra={"query": query[:100], "result_count": len(results)})
     return results

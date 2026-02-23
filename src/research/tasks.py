@@ -73,11 +73,13 @@ async def post_callback(
     """
     import asyncio
 
+    logger.debug("posting callback", extra={"url": url})
     for attempt in range(1 + retry_config.max_retries):
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()
+                logger.info("callback delivered", extra={"url": url})
                 return
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
             if attempt < retry_config.max_retries:
@@ -86,17 +88,24 @@ async def post_callback(
                     retry_config.max_delay,
                 )
                 logger.warning(
-                    "callback POST to %s failed (attempt %d/%d), retrying in %.1fs: %s",
-                    url, attempt + 1, retry_config.max_retries + 1, delay, exc,
+                    "callback POST failed, retrying",
+                    extra={
+                        "url": url,
+                        "attempt": attempt + 1,
+                        "max_attempts": retry_config.max_retries + 1,
+                        "delay_seconds": delay,
+                        "error": str(exc),
+                    },
                 )
                 await asyncio.sleep(delay)
             else:
                 logger.warning(
-                    "callback POST to %s failed after %d attempts",
-                    url, retry_config.max_retries + 1, exc_info=True,
+                    "callback POST failed after all retries",
+                    extra={"url": url, "attempts": retry_config.max_retries + 1},
+                    exc_info=True,
                 )
         except Exception:
-            logger.warning("callback POST to %s failed (non-retryable)", url, exc_info=True)
+            logger.warning("callback POST failed (non-retryable)", extra={"url": url}, exc_info=True)
             return
 
 
@@ -112,6 +121,28 @@ async def run_background_research(
     callback_url: str | None = None,
 ) -> None:
     """Run research in the background, cache the result, and optionally POST callback."""
+    from datetime import datetime, timezone
+
+    logger.info(
+        "background research task started",
+        extra={
+            "task_id": task_id,
+            "query": query[:100],
+            "report_type": report_type,
+            "depth": depth,
+            "breadth": breadth,
+            "has_callback": bool(callback_url),
+        },
+    )
+
+    # Store "processing" status so polling returns 200 instead of 404
+    now = datetime.now(timezone.utc)
+    await cache.set(
+        task_id,
+        ResearchResult(task_id=task_id, status="processing", created_at=now),
+        ttl=settings.result_ttl_seconds,
+    )
+
     try:
         result: ResearchResult = await engine.run(
             query=query,
@@ -123,6 +154,10 @@ async def run_background_research(
         # so polling via GET /research/{task_id} works with the id returned at 202.
         result = result.model_copy(update={"task_id": task_id})
         await cache.set(task_id, result, ttl=settings.result_ttl_seconds)
+        logger.info(
+            "background research task completed",
+            extra={"task_id": task_id, "total_tokens": result.usage.total_tokens if result.usage else 0},
+        )
 
         if callback_url:
             await post_callback(
@@ -134,4 +169,10 @@ async def run_background_research(
                 },
             )
     except Exception:
-        logger.exception("background research failed for query=%r", query)
+        logger.exception("background research task failed", extra={"task_id": task_id, "query": query[:100]})
+        # Cache a "failed" status so the client knows the task won't complete
+        await cache.set(
+            task_id,
+            ResearchResult(task_id=task_id, status="failed", created_at=now),
+            ttl=settings.result_ttl_seconds,
+        )

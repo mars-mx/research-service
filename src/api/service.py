@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from typing import Any, AsyncGenerator
 
@@ -12,6 +13,8 @@ from src.cache.redis import RedisCache
 from src.config import Settings
 from src.research.engine import ResearchEngine, resolve_params
 from src.research.tasks import post_callback, run_background_research
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_task_id() -> str:
@@ -29,6 +32,16 @@ async def start_background_research(
         body.depth, body.research_depth, body.research_breadth, body.report_type
     )
     task_id = _generate_task_id()
+    logger.info(
+        "background research started",
+        extra={
+            "task_id": task_id,
+            "query": body.query[:100],
+            "report_type": report_type,
+            "depth": depth,
+            "breadth": breadth,
+        },
+    )
 
     asyncio.create_task(
         run_background_research(
@@ -65,6 +78,15 @@ async def stream_research(
     report_type, depth, breadth = resolve_params(
         body.depth, body.research_depth, body.research_breadth, body.report_type
     )
+    logger.info(
+        "streaming research started",
+        extra={
+            "query": body.query[:100],
+            "report_type": report_type,
+            "depth": depth,
+            "breadth": breadth,
+        },
+    )
 
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
@@ -81,6 +103,7 @@ async def stream_research(
                 on_event=on_event,
             )
             await cache.set(result.task_id, result, ttl=settings.result_ttl_seconds)
+            logger.info("streaming research completed", extra={"task_id": result.task_id})
 
             if body.callback_url:
                 await post_callback(
@@ -92,6 +115,7 @@ async def stream_research(
                     },
                 )
         except Exception:
+            logger.exception("streaming research failed", extra={"query": body.query[:100]})
             await queue.put(("error", {"message": "Research failed"}))
         finally:
             await queue.put(None)  # sentinel

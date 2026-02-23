@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     max_depth_tier: str = "deep"
     log_level: str = "INFO"
 
+    reddit_max_comments: int = 10
+    reddit_max_comment_depth: int = 3
+    reddit_min_comment_score: int = 2
+    reddit_max_content_length: int = 15000
+    reddit_request_delay: float = 0.5
+    reddit_user_agent: str = "research-service/0.1.0"
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -84,9 +84,17 @@ async def compress_context(
     if not passages:
         return [], empty_usage
     if len(passages) <= top_k:
+        logger.debug(
+            "passage count within top_k, skipping compression",
+            extra={"passage_count": len(passages), "top_k": top_k},
+        )
         return passages, empty_usage
 
     provider, model_name = _parse_embedding_model(model)
+    logger.debug(
+        "compressing context",
+        extra={"passage_count": len(passages), "top_k": top_k, "provider": provider, "model": model_name},
+    )
 
     try:
         all_texts = [query] + passages
@@ -109,6 +117,10 @@ async def compress_context(
         similarities = doc_norms @ query_norm
 
         top_indices = np.argsort(similarities)[::-1][:top_k]
+        logger.debug(
+            "context compressed",
+            extra={"passages_in": len(passages), "passages_out": top_k, "embed_tokens": usage.get("input_tokens", 0)},
+        )
         return [passages[i] for i in top_indices], usage
     except Exception:
         logger.warning("context compression failed, returning all passages", exc_info=True)

@@ -27,30 +27,37 @@ class RedisCache:
         try:
             raw = await self._client.get(f"{KEY_PREFIX}{task_id}")
             if raw is None:
+                logger.debug("cache miss", extra={"task_id": task_id})
                 return None
+            logger.debug("cache hit", extra={"task_id": task_id})
             return ResearchResult.model_validate_json(raw)
         except redis.RedisError:
-            logger.warning("cache get failed for %s", task_id, exc_info=True)
+            logger.warning("cache get failed", extra={"task_id": task_id}, exc_info=True)
             return None
 
     async def set(
         self, task_id: str, result: ResearchResult, ttl: int | None = None
     ) -> bool:
         """Store *result* with a TTL. Returns ``False`` on error."""
+        effective_ttl = ttl if ttl is not None else self._default_ttl
         try:
             payload = result.model_dump_json()
             await self._client.set(
                 f"{KEY_PREFIX}{task_id}",
                 payload,
-                ex=ttl if ttl is not None else self._default_ttl,
+                ex=effective_ttl,
             )
+            logger.debug("cache set", extra={"task_id": task_id, "ttl": effective_ttl})
             return True
         except redis.RedisError:
-            logger.warning("cache set failed for %s", task_id, exc_info=True)
+            logger.warning("cache set failed", extra={"task_id": task_id}, exc_info=True)
             return False
 
 
 async def create_redis_client(redis_url: str) -> redis.Redis:
+    # Strip credentials for logging (everything before @ if present)
+    safe_url = redis_url.split("@")[-1] if "@" in redis_url else redis_url
+    logger.info("connecting to redis", extra={"redis_url": safe_url})
     retry = Retry(ExponentialBackoff(), retries=3)
     return redis.from_url(
         redis_url,

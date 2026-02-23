@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-settings",
     "httpx",
     "sse-starlette",
+    "python-json-logger>=3.0.0",
 ]
 
 [dependency-groups]

@@ -117,6 +117,18 @@ class ResearchEngine:
         writer_bucket = _TokenBucket(model=self._smart_model, role="writer")
         embed_bucket = _TokenBucket(model=self._settings.embedding_model, role="embedding")
 
+        logger.info(
+            "research pipeline started",
+            extra={
+                "task_id": task_id,
+                "query": query[:100],
+                "report_type": report_type,
+                "depth": depth,
+                "breadth": breadth,
+                "model_fast": self._model,
+                "model_smart": self._smart_model,
+            },
+        )
         await emit_event(on_event, "started", {"task_id": task_id})
 
         # --- Stage 1: Plan sub-queries ---
@@ -138,6 +150,16 @@ class ResearchEngine:
         all_images.extend(images)
         planner_bucket.add(p_inp, p_out, p_reqs)
         embed_bucket.add(e_usage.get("input_tokens", 0), 0, e_usage.get("requests", 0))
+        logger.info(
+            "research level completed",
+            extra={
+                "task_id": task_id,
+                "level": 1,
+                "total_levels": depth,
+                "urls_found": len(urls),
+                "sources_count": len(sources),
+            },
+        )
 
         # --- Recursive depth levels ---
         for level in range(1, depth):
@@ -162,6 +184,17 @@ class ResearchEngine:
             all_images.extend(images)
             planner_bucket.add(p_inp, p_out, p_reqs)
             embed_bucket.add(e_usage.get("input_tokens", 0), 0, e_usage.get("requests", 0))
+            logger.info(
+                "research level completed",
+                extra={
+                    "task_id": task_id,
+                    "level": level + 1,
+                    "total_levels": depth,
+                    "breadth": next_breadth,
+                    "urls_found": len(urls),
+                    "sources_count": len(sources),
+                },
+            )
 
         # --- Stage 5: Write report ---
         await emit_event(on_event, "status", {"step": "writing", "message": "Generating final report..."})
@@ -170,6 +203,10 @@ class ResearchEngine:
         # Compress context via embeddings instead of naive word trimming
         words = combined_context.split()
         if len(words) > 25000:
+            logger.info(
+                "compressing combined context",
+                extra={"task_id": task_id, "word_count": len(words)},
+            )
             passages = combined_context.split("\n\n---\n\n")
             passages, embed_usage = await compress_context(
                 query=query,
@@ -191,6 +228,16 @@ class ResearchEngine:
 
         detailed = report_type == "detailed_report"
         prompt = format_report_prompt(query, combined_context, detailed=detailed, min_words=min_words)
+        logger.info(
+            "writing report",
+            extra={
+                "task_id": task_id,
+                "context_words": len(combined_context.split()),
+                "total_urls": len(all_urls),
+                "total_sources": len(all_sources),
+                "min_words": min_words,
+            },
+        )
 
         writer = Agent(self._smart_model)
         write_result = await writer.run(prompt)
@@ -246,6 +293,17 @@ class ResearchEngine:
             created_at=now,
         )
 
+        logger.info(
+            "research pipeline completed",
+            extra={
+                "task_id": task_id,
+                "sources": len(unique_sources),
+                "total_tokens": total_input + total_output,
+                "total_requests": total_requests,
+                "report_words": len(report.split()),
+            },
+        )
+
         await emit_event(on_event, "result", {
             "task_id": task_id,
             "report": report,
@@ -287,6 +345,14 @@ class ResearchEngine:
         planner_input += plan_usage.input_tokens or 0
         planner_output += (plan_usage.output_tokens or 0) + _reasoning_tokens(plan_usage)
         planner_requests += plan_usage.requests or 0
+        logger.debug(
+            "sub-queries planned",
+            extra={
+                "query": query[:100],
+                "sub_queries": sub_queries,
+                "has_prior_context": bool(prior_context),
+            },
+        )
 
         # Search all sub-queries in parallel
         await emit_event(on_event, "status", {"step": "researching", "message": f"Searching {len(sub_queries)} queries..."})
@@ -295,6 +361,15 @@ class ResearchEngine:
             for q in sub_queries
         ]
         search_results_list: list[list[SearchResult]] = await asyncio.gather(*search_tasks)
+        total_results = sum(len(r) for r in search_results_list)
+        logger.info(
+            "search completed",
+            extra={
+                "query": query[:100],
+                "queries_searched": len(sub_queries),
+                "total_results": total_results,
+            },
+        )
 
         # Collect URLs and emit findings
         all_search_results: list[SearchResult] = []
@@ -311,11 +386,19 @@ class ResearchEngine:
             urls_to_scrape,
             registry=self._registry,
         )
+        logger.info(
+            "scrape completed",
+            extra={
+                "urls_attempted": len(urls_to_scrape),
+                "pages_returned": len(pages),
+            },
+        )
 
         # Build passages from scraped content
         passages = [f"Source: {p.url}\nTitle: {p.title}\n\n{p.content}" for p in pages]
 
         # Compress context via embeddings
+        passage_count_before = len(passages)
         if passages:
             await emit_event(on_event, "status", {"step": "researching", "message": "Compressing context..."})
             passages, embed_usage = await compress_context(
@@ -324,6 +407,14 @@ class ResearchEngine:
                 api_key=self._embedding_api_key,
                 model=self._settings.embedding_model,
                 top_k=10,
+            )
+            logger.info(
+                "context compressed",
+                extra={
+                    "passages_in": passage_count_before,
+                    "passages_out": len(passages),
+                    "embed_tokens": embed_usage.get("input_tokens", 0),
+                },
             )
 
         context_text = "\n\n---\n\n".join(passages)
