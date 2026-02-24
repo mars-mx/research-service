@@ -50,6 +50,7 @@ def _mock_settings(**overrides):
         firecrawl_api_url="",
         gemini_api_key="test-gemini",
         embedding_model="openai:text-embedding-3-small",
+        vercel_ai_gateway_api_key="",
     )
     defaults.update(overrides)
     settings = MagicMock()

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.vercel import VercelProvider
 
 from src.api.schemas import (
     ModelUsage,
@@ -92,10 +94,18 @@ class ResearchEngine:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._model = f"{settings.llm_provider}:{settings.fast_llm}"
-        self._smart_model = f"{settings.llm_provider}:{settings.smart_llm}"
+        self._model = self._build_model(settings.fast_llm)
+        self._smart_model = self._build_model(settings.smart_llm)
+        self._model_name = f"{settings.llm_provider}:{settings.fast_llm}"
+        self._smart_model_name = f"{settings.llm_provider}:{settings.smart_llm}"
         self._registry = build_default_registry(settings)
         self._embedding_api_key = self._resolve_embedding_api_key()
+
+    def _build_model(self, model_name: str) -> OpenAIChatModel | str:
+        """Build a model instance with explicit credentials, or return a string for auto-resolution."""
+        if self._settings.llm_provider == "vercel" and self._settings.vercel_ai_gateway_api_key:
+            return OpenAIChatModel(model_name, provider=VercelProvider(api_key=self._settings.vercel_ai_gateway_api_key))
+        return f"{self._settings.llm_provider}:{model_name}"
 
     def _resolve_embedding_api_key(self) -> str:
         """Pick the correct API key for the configured embedding provider."""
@@ -113,8 +123,8 @@ class ResearchEngine:
     ) -> ResearchResult:
         """Execute the full research pipeline and return a result."""
         task_id = uuid.uuid4().hex[:12]
-        planner_bucket = _TokenBucket(model=self._model, role="planner")
-        writer_bucket = _TokenBucket(model=self._smart_model, role="writer")
+        planner_bucket = _TokenBucket(model=self._model_name, role="planner")
+        writer_bucket = _TokenBucket(model=self._smart_model_name, role="writer")
         embed_bucket = _TokenBucket(model=self._settings.embedding_model, role="embedding")
 
         logger.info(
@@ -125,8 +135,8 @@ class ResearchEngine:
                 "report_type": report_type,
                 "depth": depth,
                 "breadth": breadth,
-                "model_fast": self._model,
-                "model_smart": self._smart_model,
+                "model_fast": self._model_name,
+                "model_smart": self._smart_model_name,
             },
         )
         await emit_event(on_event, "started", {"task_id": task_id})

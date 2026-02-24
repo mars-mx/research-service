@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     firecrawl_api_url: str = ""
     tavily_api_key: str = ""
 
+    vercel_ai_gateway_api_key: str = ""
+
     redis_url: str = "redis://localhost:6379"
     allowed_callback_hosts: str = ""
     result_ttl_seconds: int = 3600
